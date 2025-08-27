@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: me-scheduler
+    env: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python me_scheduler.py"
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disks:
+      - name: me-persist
+        mountPath: /var/me
+        sizeGB: 1

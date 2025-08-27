@@ -1,0 +1,31 @@
+from requests_oauthlib import OAuth2Session
+from config import TWITTER_CLIENT_ID, TWITTER_CLIENT_SECRET, TWITTER_REDIRECT_URI
+
+AUTH_URL = "https://twitter.com/i/oauth2/authorize"
+TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
+SCOPES = ["tweet.read", "tweet.write", "users.read", "offline.access"]
+
+oauth = OAuth2Session(
+    client_id=TWITTER_CLIENT_ID,
+    redirect_uri=TWITTER_REDIRECT_URI,
+    scope=SCOPES
+)
+
+# Step 1: Print authorization URL
+authorization_url, state = oauth.authorization_url(AUTH_URL)
+print("🔗 Go to this URL and authorize ME.:")
+print(authorization_url)
+
+# Step 2: Paste redirect response after approving
+redirect_response = input("\n🔁 Paste the full redirect URL after approval: ")
+
+# Step 3: Exchange for token
+token = oauth.fetch_token(
+    TOKEN_URL,
+    authorization_response=redirect_response,
+    client_secret=TWITTER_CLIENT_SECRET
+)
+
+print("\n✅ Access Token:", token['access_token'])
+print("🔄 Refresh Token:", token['refresh_token'])
+

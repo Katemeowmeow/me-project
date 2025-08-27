@@ -1,0 +1,11 @@
+.venv/
+.env
+
+# local caches & secrets
+.venv/
+.env
+__pycache__/
+me_voice_db/
+*.bin
+*.sqlite3
+me_caption_log.csv
