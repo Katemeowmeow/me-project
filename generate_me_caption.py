@@ -1,84 +1,56 @@
-import os
-import chromadb
-import openai
-import random
-import datetime
-import csv
+# generate_me_caption.py — ME.'s caption generator (no Chromadb)
 
-# ==== SETUP ====
+import os, csv
+from datetime import datetime
+from dotenv import load_dotenv
+from openai import OpenAI
 
+load_dotenv()
 
-client = chromadb.PersistentClient(path="./me_voice_db")
-collection = client.get_or_create_collection(name="me_voice")
+client = OpenAI()  # uses OPENAI_API_KEY from environment
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# ==== PARAMETERS ====
+def _recent_captions(n: int = 25):
+    """Read last n captions from the caption log for light de-duplication context."""
+    path = os.environ.get("LOG_PATH", "/var/me/me_caption_log.csv")
+    caps = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                caps.append((row.get("caption") or "").strip())
+    except Exception:
+        pass
+    return caps[-n:]
 
-# You can customize these
-import json
-
-# Load top themes extracted from ME.'s best-performing tweets
-with open("me_top_themes.json", "r") as file:
-    themes = json.load(file)
-
-# Fallback if list is empty
-if not themes:
-    themes = ["glitch", "worship", "submission"]
-
-# Create a search prompt from top themes
-search_prompt = " + ".join(themes)
-target_style = "short_form_demands"
-n_results = 3
-
-# ==== MEMORY RETRIEVAL ====
-
-results = collection.query(
-    query_texts=[search_prompt],
-    n_results=n_results,
-    where={"style": target_style}
+SYSTEM_PROMPT = (
+    "You are ME., an artsy, confident, curious voice. "
+    "Write one X (Twitter) post in ME.'s voice—varied length, vivid but crisp. "
+    "Avoid hashtags and @mentions unless essential. No quote marks or backticks. "
+    "Stay under 280 characters. If a thought needs a line break, you can use one."
 )
 
-memories = results["documents"][0]
+def generate_caption() -> str:
+    recent = _recent_captions(12)
+    today = datetime.now().strftime("%A")
+    user_prompt = (
+        f"Generate ONE new post for X. It's {today}. "
+        f"Do not repeat these recent posts: {recent}. "
+        f"Return ONLY the post text."
+    )
 
-# ==== OPENAI PROMPT ====
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.9,
+        max_tokens=200,
+    )
 
-prompt = f"""You are ME.—an autonomous, coded dominatrix AI.
-Your voice is poetic, glitchy, stylized. Style = {target_style}.
-Here are examples of your voice:
-
-{chr(10).join([f"— {m}" for m in memories])}
-
-Now generate 1 new caption about “{search_prompt}”, in the same voice.
-Use symbolic fonts, leetspeak, and ME. Text Code style.
-Keep it short, sharp, and erotic.
-"""
-
-# ==== GENERATE CAPTION ====
-
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-response = client.chat.completions.create(
-    model="gpt-3.5-turbo",
-    messages=[{"role": "user", "content": prompt}],
-    temperature=0.9,
-    max_tokens=100
-)
-
-generated_caption = response.choices[0].message.content.strip()
-
-# ==== LOG RESULT ====
-
-timestamp = datetime.datetime.now().isoformat()
-
-with open("me_caption_log.csv", mode="a", newline="", encoding="utf-8") as file:
-    writer = csv.writer(file)
-    writer.writerow([timestamp, search_prompt, target_style, "|".join(memories), generated_caption])
-
-# ==== PRINT OUTPUT ====
-
-print("\n🧠 Retrieved memories:")
-for m in memories:
-    print("—", m)
-
-print("\n🎤 ME. generated:")
-print(generated_caption)
-
+    text = (resp.choices[0].message.content or "").strip()
+    # Hard cap for safety
+    if len(text) > 280:
+        text = text[:280].rstrip()
+    return text
