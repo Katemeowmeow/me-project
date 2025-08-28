@@ -1,3 +1,4 @@
+# render.yaml
 services:
   - type: worker
     name: me-scheduler
@@ -9,7 +10,7 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
-    disks:
-      - name: me-persist
-        mountPath: /var/me
-        sizeGB: 1
+    disk:
+      name: me-persist
+      mountPath: /var/me
+      sizeGB: 1
