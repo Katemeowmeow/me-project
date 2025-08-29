@@ -1,66 +1,86 @@
 # me_metrics.py
-import os, json, requests
-from datetime import datetime, timezone
-from dotenv import load_dotenv
+import os
+import json
+from datetime import datetime
+from typing import List, Dict, Any
 
-load_dotenv()
-API = "https://api.twitter.com/2"
+# We rely on the helper functions in twitter_api.py
+# These should refresh tokens automatically on 401s.
+from twitter_api import who_am_i, get_user_tweets
 
-def _env(key):
-    v = os.getenv(key)
-    if not v:
-        raise RuntimeError(f"Missing {key} in .env")
-    return v
+DATA_FILE = "me_tweet_data.json"
 
-def _auth_headers():
-    return {"Authorization": f"Bearer {_env('TW_ACCESS_TOKEN')}"}
 
-def score_engagement(m):
-    if not isinstance(m, dict): return 0.0
-    likes  = m.get("like_count", 0)
-    rts    = m.get("retweet_count", 0)
-    repl   = m.get("reply_count", 0)
-    quotes = m.get("quote_count", 0)
-    # simple weighted score
-    return likes*1.0 + rts*1.5 + repl*1.2 + quotes*1.2
-
-def _load_json(path, default):
+def _load_json(path: str, default):
     try:
-        if os.path.exists(path):
-            with open(path, "r") as f: return json.load(f)
+        with open(path, "r") as f:
+            return json.load(f)
     except Exception:
-        pass
-    return default
+        return default
 
-def update_me_tweet_data(max_results=100, exclude_replies=True, exclude_retweets=True):
+
+def _save_json(path: str, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+def score_engagement(m: Dict[str, Any]) -> int:
+    """A simple, tweakable engagement score."""
+    if not m:
+        return 0
+    return (
+        int(m.get("like_count", 0))
+        + 2 * int(m.get("reply_count", 0))
+        + 2 * int(m.get("retweet_count", 0))
+        + int(m.get("quote_count", 0))
+        + int(m.get("bookmark_count", 0))
+    )
+
+
+def update_me_tweet_data(
+    max_results: int = 100,
+    exclude_replies: bool = True,
+    exclude_retweets: bool = True,
+) -> List[Dict[str, Any]]:
     """
-    Fetches your latest tweets and merges into me_tweet_data.json:
-    [{id, text, created_at, public_metrics, score}]
+    Pulls latest tweets for the authenticated user (OAuth2),
+    merges with the local cache, computes a score, and persists.
+    Returns the merged rows (most-recent first).
     """
-    # who am i
-    me = requests.get(f"{API}/users/me",
-                      headers=_auth_headers(),
-                      params={"user.fields":"public_metrics"}).json()
-    if "data" not in me:
+    # 1) Resolve authenticated user id
+    me = who_am_i()
+    if "data" not in me or "id" not in me["data"]:
         raise RuntimeError(f"/users/me failed: {me}")
     uid = me["data"]["id"]
 
-    exclude = []
-    if exclude_replies:  exclude.append("replies")
-    if exclude_retweets: exclude.append("retweets")
+    # 2) Build params for /users/:id/tweets
     params = {
         "max_results": max_results,
         "tweet.fields": "created_at,public_metrics",
     }
-    if exclude: params["exclude"] = ",".join(exclude)
+    exclude = []
+    if exclude_replies:
+        exclude.append("replies")
+    if exclude_retweets:
+        exclude.append("retweets")
+    if exclude:
+        params["exclude"] = ",".join(exclude)
 
-    resp = requests.get(f"{API}/users/{uid}/tweets",
-                        headers=_auth_headers(), params=params).json()
+    # 3) Fetch tweets
+    resp = get_user_tweets(uid, **params)
     if "data" not in resp:
         raise RuntimeError(f"/users/:id/tweets failed: {resp}")
 
-    existing = _load_json("me_tweet_data.json", [])
-    by_id = {row.get("id"): row for row in existing if isinstance(row, dict)}
+    # 4) Merge with existing cache
+    existing = _load_json(DATA_FILE, [])
+    by_id = {
+        row["id"]: row
+        for row in existing
+        if isinstance(row, dict) and "id" in row
+    }
+
     for t in resp["data"]:
         row = {
             "id": t["id"],
@@ -71,7 +91,12 @@ def update_me_tweet_data(max_results=100, exclude_replies=True, exclude_retweets
         row["score"] = score_engagement(row["engagement"])
         by_id[row["id"]] = row
 
-    merged = list(by_id.values())
-    with open("me_tweet_data.json", "w") as f:
-        json.dump(merged, f, indent=2)
+    merged = sorted(
+        by_id.values(),
+        key=lambda r: r.get("created_at", ""),
+        reverse=True,
+    )
+
+    # 5) Persist
+    _save_json(DATA_FILE, merged)
     return merged
